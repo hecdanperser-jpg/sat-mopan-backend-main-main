@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+pydantic[email]==2.9.2
+bcrypt==4.2.0
+pyjwt==2.9.0
+python-multipart==0.0.12
+scikit-learn==1.5.2
+numpy==2.1.0
+tensorflow-cpu==2.21.0
+pandas==2.2.3
