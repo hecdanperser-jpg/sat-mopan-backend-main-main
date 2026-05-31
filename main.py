@@ -9,6 +9,7 @@ from typing import List
 import jwt
 import bcrypt
 import os
+import httpx
 
 from database import get_db, engine, Base
 from models import Medicion, Alerta, Usuario, Configuracion
@@ -21,6 +22,24 @@ from schemas import (
 SECRET_KEY         = os.getenv("SECRET_KEY", "sat-mopan-secret-2024")
 ALGORITHM          = "HS256"
 TOKEN_EXPIRE_HOURS = 8
+
+# ─── CallMeBot WhatsApp ───────────────────────────────────────
+CALLMEBOT_PHONE  = "50244941779"
+CALLMEBOT_APIKEY = "9451848"
+
+async def enviar_whatsapp(mensaje: str):
+    try:
+        url = "https://api.callmebot.com/whatsapp.php"
+        params = {
+            "phone":  CALLMEBOT_PHONE,
+            "text":   mensaje,
+            "apikey": CALLMEBOT_APIKEY
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.get(url, params=params)
+        print(f"[WHATSAPP] Enviado: {mensaje}")
+    except Exception as e:
+        print(f"[WHATSAPP] Error: {e}")
 
 app = FastAPI(title="SAT Mopán API", version="1.0.0")
 
@@ -105,6 +124,16 @@ async def recibir_medicion(
                 estado_entrega="registrado"
             )
             db.add(alerta)
+
+            # Enviar alerta WhatsApp via CallMeBot
+            hora_gt = datetime.utcnow() - timedelta(hours=6)
+            msg = (
+                f"SAT MOPAN [{tipo.upper()}] "
+                f"Rio Mopan - Puente El Camalote. "
+                f"Distancia al agua: {datos.nivel_cm:.1f} cm. "
+                f"Hora: {hora_gt.strftime('%d/%m/%Y %H:%M')} hora GT."
+            )
+            await enviar_whatsapp(msg)
 
     await db.commit()
     return {"ok": True, "id": nueva.id, "nivel_cm": datos.nivel_cm}
@@ -226,10 +255,6 @@ async def obtener_prediccion(db: AsyncSession = Depends(get_db)):
 
 @app.get("/prediccion-lstm", tags=["ML"])
 async def obtener_prediccion_lstm(db: AsyncSession = Depends(get_db)):
-    """
-    Predicción usando modelo LSTM entrenado con datos históricos del río Mopán.
-    Requiere al menos 24 mediciones en la base de datos.
-    """
     from ml_lstm import predecir_lstm
 
     result = await db.execute(
@@ -254,10 +279,6 @@ async def obtener_prediccion_lstm(db: AsyncSession = Depends(get_db)):
 
 @app.get("/proyeccion", tags=["ML"])
 async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
-    """
-    Proyeccion futura del nivel del rio basada en la tasa de cambio actual.
-    Devuelve puntos cada 5 minutos para los proximos 120 minutos.
-    """
     result = await db.execute(
         select(Medicion)
         .order_by(desc(Medicion.timestamp))
@@ -269,7 +290,6 @@ async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
     if len(validas) < 3:
         return {"error": "Insuficientes datos para proyeccion", "n_mediciones": len(validas)}
 
-    # Calcular tasa de cambio promedio (cm/min)
     deltas = []
     for i in range(1, len(validas)):
         dt = (validas[i].timestamp - validas[i-1].timestamp).total_seconds() / 60
@@ -278,7 +298,6 @@ async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
 
     tasa_cm_min = sum(deltas) / len(deltas) if deltas else 0.0
 
-    # Calcular aceleracion (segunda derivada)
     aceleracion = 0.0
     if len(deltas) >= 2:
         aceleracion = (deltas[-1] - deltas[0]) / len(deltas)
@@ -286,7 +305,6 @@ async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
     dist_actual = validas[-1].nivel_cm
     timestamp_actual = validas[-1].timestamp
 
-    # Generar puntos de proyeccion cada 5 minutos por 120 minutos
     puntos = []
     puntos.append({
         "minutos": 0,
@@ -296,11 +314,9 @@ async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
     })
 
     for t in range(5, 125, 5):
-        # Proyeccion lineal con leve aceleracion
         dist_proyectada = dist_actual + (tasa_cm_min * t) + (0.5 * aceleracion * t)
         dist_proyectada = max(0, round(dist_proyectada, 1))
 
-        # Determinar estado proyectado
         if dist_proyectada <= 50:
             estado = "EMERGENCIA"
         elif dist_proyectada <= 100:
@@ -317,7 +333,6 @@ async def obtener_proyeccion(db: AsyncSession = Depends(get_db)):
             "tipo": "proyeccion"
         })
 
-    # Calcular cuando cruza cada umbral
     cruces = {}
     for p in puntos:
         if p["tipo"] == "proyeccion":
