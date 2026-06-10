@@ -24,8 +24,8 @@ ALGORITHM          = "HS256"
 TOKEN_EXPIRE_HOURS = 8
 
 # ─── CallMeBot WhatsApp ───────────────────────────────────────
-CALLMEBOT_PHONE  = "50244941779"
-CALLMEBOT_APIKEY = "9451848"
+CALLMEBOT_PHONE  = "50239913010"
+CALLMEBOT_APIKEY = "1186496"
 
 async def enviar_whatsapp(mensaje: str):
     try:
